@@ -186,12 +186,15 @@ void simulate_serial (void)
     if((uart.tx_irq = uart.tx_irq_enable))
         isr[UART_IRQ]();
 
-    if(uart.rx_irq_enable && !uart.rx_irq && hal.stream.get_rx_buffer_free() > 100) {
+    // Read as many bytes as available from input (important for TCP mode
+    // where data arrives in bulk rather than at baud rate)
+    while(uart.rx_irq_enable && !uart.rx_irq && hal.stream.get_rx_buffer_free() > 100) {
         uint8_t char_in = sim.getchar();
         if (char_in) {
             uart.rx_data = char_in;
             uart.rx_irq = 1;
             isr[UART_IRQ]();
-        }
+        } else
+            break;
     }
 }

@@ -35,6 +35,7 @@
 #endif
 
 static spindle_id_t spindle_id;
+static spindle_pwm_t spindle_pwm;
 static bool probe_invert;
 static uint32_t ticks = 0;
 static delay_t delay = { .ms = 1, .callback = NULL }; // NOTE: initial ms set to 1 for "resetting" systick timer on startup
@@ -270,20 +271,28 @@ static void spindleSetState (spindle_ptrs_t *spindle, spindle_state_t state, flo
 
 // Variable spindle control functions
 
-// Sets spindle speed
+// Apply PWM value to hardware
 static void spindle_set_speed (spindle_ptrs_t *spindle, uint_fast16_t pwm_value)
 {
+    // In a real driver this would set a hardware PWM register.
+    // For the simulator we just need the value tracked for status reports.
 }
 
+// Convert RPM to PWM value
 static uint_fast16_t spindleGetPWM (spindle_ptrs_t *spindle, float rpm)
 {
-    return 0; //spindle_compute_pwm_value(&spindle_pwm, rpm, false);
+    return spindle->context.pwm->compute_value(spindle->context.pwm, rpm, false);
 }
 
-// Start or stop spindle
+// Start or stop spindle with variable speed
 static void spindleSetStateVariable (spindle_ptrs_t *spindle, spindle_state_t state, float rpm)
 {
     mcu_gpio_set(&gpio[SPINDLE_PORT], state.value ^ settings.pwm_spindle.invert.mask, SPINDLE_MASK);
+
+    if(state.on)
+        spindle->update_pwm(spindle, spindle->get_pwm(spindle, rpm));
+    else
+        spindle->update_pwm(spindle, spindle->pwm_off_value);
 }
 
 // Returns spindle state in a spindle_state_t variable
@@ -301,7 +310,13 @@ static bool spindleConfig (spindle_ptrs_t *spindle)
     if(spindle == NULL)
         return false;
 
-//    spindle_update_caps(spindle, spindle->cap.variable ? &spindle_pwm : NULL);
+    if(spindle->cap.variable) {
+        // Initialize PWM data structure from settings.
+        // Use 1MHz as the simulated timer clock frequency.
+        spindle_precompute_pwm_values(spindle, &spindle_pwm, &settings.pwm_spindle, 1000000);
+    }
+
+    spindle_update_caps(spindle, spindle->cap.variable ? &spindle_pwm : NULL);
 
     return true;
 }
@@ -464,10 +479,10 @@ bool driver_init ()
         .cap.laser = On,
         .cap.direction = On,
         .config = spindleConfig,
+        .set_state = spindleSetStateVariable,
+        .get_state = spindleGetState,
         .get_pwm = spindleGetPWM,
         .update_pwm = spindle_set_speed,
-        .set_state = spindleSetState,
-        .get_state = spindleGetState
     };
 
     spindle_register(&spindle, "simulated PWM spindle");

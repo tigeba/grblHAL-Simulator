@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(grblHAL-sim C)
 
 add_compile_definitions(F_CPU=16000000)
+add_compile_definitions(RX_BUFFER_SIZE=4096)
 #add_compile_definitions(SQUARING_ENABLED=1)
 
 include(src/grbl/CMakeLists.txt)
