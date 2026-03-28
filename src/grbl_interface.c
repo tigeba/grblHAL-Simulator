@@ -31,18 +31,40 @@
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
 #include "grbl/state_machine.h"
+#include "grbl/settings.h"
+#include "grbl/probe.h"
 
 int block_position[N_AXIS] = {0}; //step count after most recently planned block
 uint32_t block_number = 0;
 double next_print_time;
 
+// Simulated toolsetter surface height in machine coordinates (mm).
+// When probing, the probe pin triggers when Z reaches this height.
+// Set to 0.0 to simulate a toolsetter at the Z machine origin.
+// Configurable via TOOLSETTER_Z_MM environment variable.
+static float toolsetter_z_mm = -50.0f;
+static bool toolsetter_initialized = false;
+static bool probe_pin_active = false;
+
 static void print_steps(bool force);
 static void printBlock(void);
+static void simulate_probe(void);
+static void simulate_limits(void);
 
 void grbl_app_init (void)
 {
     //setup local tacking vars
     next_print_time = args.step_time;
+
+    // Allow toolsetter height to be configured via environment variable
+    const char *env_z = getenv("TOOLSETTER_Z_MM");
+    if (env_z) {
+        toolsetter_z_mm = (float)atof(env_z);
+        fprintf(stderr, "[SIM] Toolsetter Z surface: %.3f mm (from env)\n", toolsetter_z_mm);
+    } else {
+        fprintf(stderr, "[SIM] Toolsetter Z surface: %.3f mm (default)\n", toolsetter_z_mm);
+    }
+    toolsetter_initialized = true;
 }
 
 void grbl_per_tick (void)
@@ -50,10 +72,56 @@ void grbl_per_tick (void)
     //maybe print the position every tick
     print_steps(0);
 
-    //TODO:
-    //  set limit pins based on position,
-    //  set probe pin when probing.
-    //  if VARIABLE_SPINDLE, measure pwm pin to report speed?
+    // Simulate probe pin (toolsetter) based on Z position
+    simulate_probe();
+
+    // Simulate limit switches based on axis positions
+    simulate_limits();
+}
+
+// Simulate toolsetter: trigger probe pin when Z reaches the toolsetter surface
+static void simulate_probe (void)
+{
+    if (!toolsetter_initialized)
+        return;
+
+    if (sys.probing_state == Probing_Active) {
+        // Convert current Z position from steps to mm
+        float z_mm = (float)sys.position[Z_AXIS] / settings.axis[Z_AXIS].steps_per_mm;
+
+        // Trigger probe when Z descends to (or past) the toolsetter surface
+        if (z_mm <= toolsetter_z_mm && !probe_pin_active) {
+            mcu_gpio_in(&gpio[PROBE_PORT], PROBE_BIT, PROBE_BIT);  // set probe triggered
+            probe_pin_active = true;
+            fprintf(stderr, "[SIM] Probe triggered at Z=%.3f mm\n", z_mm);
+        }
+    } else {
+        // Clear probe pin when not actively probing
+        if (probe_pin_active) {
+            mcu_gpio_in(&gpio[PROBE_PORT], 0, PROBE_BIT);  // clear probe triggered
+            probe_pin_active = false;
+        }
+    }
+}
+
+// Simulate limit switches based on axis travel limits
+static void simulate_limits (void)
+{
+    // Trigger limit switches when axes exceed max travel (from $130/$131/$132)
+    // This enables simulated homing and soft limit behavior.
+    float pos[N_AXIS];
+    system_convert_array_steps_to_mpos(pos, sys.position);
+
+    uint16_t limits = 0;
+
+    if (pos[X_AXIS] <= -settings.axis[X_AXIS].max_travel || pos[X_AXIS] >= 0.0f)
+        limits |= X_AXIS_BIT;
+    if (pos[Y_AXIS] <= -settings.axis[Y_AXIS].max_travel || pos[Y_AXIS] >= 0.0f)
+        limits |= Y_AXIS_BIT;
+    if (pos[Z_AXIS] <= -settings.axis[Z_AXIS].max_travel || pos[Z_AXIS] >= 0.0f)
+        limits |= Z_AXIS_BIT;
+
+    mcu_gpio_in(&gpio[LIMITS_PORT0], limits, X_AXIS_BIT | Y_AXIS_BIT | Z_AXIS_BIT);
 }
 
 void grbl_per_byte (void)
