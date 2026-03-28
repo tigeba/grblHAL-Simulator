@@ -173,6 +173,9 @@ uint8_t sim_socket_in()
 static void exithandler (int signum)
 {
     eeprom_close();
+    if(socket_fd > 0)
+        close(socket_fd);
+    _exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -368,6 +371,10 @@ int main(int argc, char *argv[])
             exit(-5);
         }
 
+        // Allow port reuse so the simulator can restart quickly
+        int optval = 1;
+        setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
         server_addr.sin_family = AF_INET;
         server_addr.sin_addr.s_addr = INADDR_ANY;
         server_addr.sin_port = htons(args.port);
@@ -417,6 +424,7 @@ int main(int argc, char *argv[])
     // Do not leave EEPROM file in an inconsistent state on ^C.
     atexit(eeprom_close);
     signal(SIGTERM, exithandler);
+    signal(SIGINT, exithandler);
 
     // All the stream io and interrupt happen in this thread.
     sim_loop();
